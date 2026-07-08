@@ -1,0 +1,4 @@
+minimalmodbus==2.1.1
+pyserial==3.5
+requests==2.32.3
+python-dotenv==1.0.1

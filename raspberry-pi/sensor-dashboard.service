@@ -1,0 +1,15 @@
+[Unit]
+Description=Sensor RS485 -> Web Dashboard reader
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/sensor-dashboard
+ExecStart=/home/pi/sensor-dashboard/venv/bin/python /home/pi/sensor-dashboard/sensor_reader.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
