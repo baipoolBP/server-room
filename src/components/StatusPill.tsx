@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { formatDateTime } from "@/lib/format";
 
-const STALE_AFTER_MS = 10 * 60 * 1000; // no reading in 10 min -> considered offline
+const STALE_AFTER_MS = 5 * 60 * 1000; // no reading in 5 min -> considered offline
 
 export function StatusPill({ lastRecordedAt }: { lastRecordedAt: string | null | undefined }) {
   const [now, setNow] = useState(() => Date.now());
