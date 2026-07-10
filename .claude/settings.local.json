@@ -4,7 +4,17 @@
       "PowerShell(npm install *)",
       "Skill(dataviz)",
       "PowerShell(npm run *)",
-      "Skill(run)"
+      "Skill(run)",
+      "Read(//c/Users/Admin/.claude/**)",
+      "Read(//c/obsidian/**)",
+      "Read(//c/obsidian/roadmap project/**)",
+      "Read(//c/obsidian/roadmap project/roadmap/**)",
+      "Bash(curl -s -o /tmp/page.html -w \"HTTP %{http_code}\\\\n\" http://localhost:3100/)",
+      "Read(//tmp/**)",
+      "Bash(powershell -NoProfile -Command \"Stop-Process -Id 12704 -Force\")",
+      "Bash(netstat -ano)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)"
     ]
   }
 }
