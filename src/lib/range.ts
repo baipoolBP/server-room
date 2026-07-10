@@ -1,14 +1,19 @@
-export type RangeKey = "1h" | "24h" | "7d" | "30d" | "custom";
+export type RangeKey = "1h" | "24h" | "7d" | "30d" | "day" | "custom";
+
+// Ranges that carry their own explicit `from`/`to` instead of a fixed span
+// ending "now" (the day-browser picker and the free-form custom picker).
+const EXPLICIT_RANGES: RangeKey[] = ["day", "custom"];
 
 export const RANGE_OPTIONS: { key: RangeKey; label: string }[] = [
   { key: "1h", label: "1 ชั่วโมง" },
   { key: "24h", label: "24 ชั่วโมง" },
   { key: "7d", label: "7 วัน" },
   { key: "30d", label: "30 วัน" },
+  { key: "day", label: "ประวัติรายวัน" },
   { key: "custom", label: "กำหนดเอง" },
 ];
 
-const RANGE_MS: Record<Exclude<RangeKey, "custom">, number> = {
+const RANGE_MS: Record<"1h" | "24h" | "7d" | "30d", number> = {
   "1h": 60 * 60 * 1000,
   "24h": 24 * 60 * 60 * 1000,
   "7d": 7 * 24 * 60 * 60 * 1000,
@@ -22,7 +27,7 @@ export function resolveRange(
 ): { from: Date; to: Date } {
   const now = new Date();
 
-  if (range === "custom" && from && to) {
+  if (EXPLICIT_RANGES.includes(range) && from && to) {
     const fromDate = new Date(from);
     const toDate = new Date(to);
     if (!Number.isNaN(fromDate.getTime()) && !Number.isNaN(toDate.getTime())) {
@@ -30,7 +35,7 @@ export function resolveRange(
     }
   }
 
-  const spanMs = RANGE_MS[range as Exclude<RangeKey, "custom">] ?? RANGE_MS["24h"];
+  const spanMs = RANGE_MS[range as keyof typeof RANGE_MS] ?? RANGE_MS["24h"];
   return { from: new Date(now.getTime() - spanMs), to: now };
 }
 

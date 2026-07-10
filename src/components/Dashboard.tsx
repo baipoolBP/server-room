@@ -31,7 +31,7 @@ export function Dashboard({ deviceId }: { deviceId: string }) {
     setIsFetching(true);
     try {
       const params = new URLSearchParams({ range, device_id: deviceId });
-      if (range === "custom") {
+      if (range === "custom" || range === "day") {
         params.set("from", customFrom.toISOString());
         params.set("to", customTo.toISOString());
       }
@@ -62,7 +62,7 @@ export function Dashboard({ deviceId }: { deviceId: string }) {
 
   function handleRangeChange(next: RangeKey, from?: Date, to?: Date) {
     setRange(next);
-    if (next === "custom" && from && to) {
+    if ((next === "custom" || next === "day") && from && to) {
       setCustomFrom(from);
       setCustomTo(to);
     }
@@ -87,49 +87,55 @@ export function Dashboard({ deviceId }: { deviceId: string }) {
         <StatusPill lastRecordedAt={latest?.recorded_at} />
       </header>
 
-      <section className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
-        <StatCard
-          label="อุณหภูมิปัจจุบัน"
-          value={formatNumber(latest?.temperature)}
-          unit="°C"
-          accent="temp"
-          sub={latest ? formatDateTime(latest.recorded_at) : undefined}
-        />
-        <StatCard
-          label="ความชื้นปัจจุบัน"
-          value={formatNumber(latest?.humidity)}
-          unit="%"
-          accent="humidity"
-          sub={latest ? formatDateTime(latest.recorded_at) : undefined}
-        />
-        <StatCard
-          label="อุณหภูมิเฉลี่ย"
-          value={formatNumber(stats?.avgTemperature)}
-          unit="°C"
-          accent="temp"
-          sub="ในช่วงที่เลือก"
-        />
-        <StatCard
-          label="ความชื้นเฉลี่ย"
-          value={formatNumber(stats?.avgHumidity)}
-          unit="%"
-          accent="humidity"
-          sub="ในช่วงที่เลือก"
-        />
-        <StatCard
-          label="ช่วงอุณหภูมิ"
-          value={`${formatNumber(stats?.minTemperature)}–${formatNumber(stats?.maxTemperature)}`}
-          unit="°C"
-          accent="temp"
-          sub="ต่ำสุด–สูงสุด"
-        />
-        <StatCard
-          label="ช่วงความชื้น"
-          value={`${formatNumber(stats?.minHumidity)}–${formatNumber(stats?.maxHumidity)}`}
-          unit="%"
-          accent="humidity"
-          sub="ต่ำสุด–สูงสุด"
-        />
+      <section className="flex flex-col gap-4">
+        <div className="grid grid-cols-2 gap-4">
+          <StatCard
+            label="อุณหภูมิปัจจุบัน"
+            value={formatNumber(latest?.temperature)}
+            unit="°C"
+            accent="temp"
+            sub={latest ? formatDateTime(latest.recorded_at) : undefined}
+          />
+          <StatCard
+            label="ความชื้นปัจจุบัน"
+            value={formatNumber(latest?.humidity)}
+            unit="%"
+            accent="humidity"
+            sub={latest ? formatDateTime(latest.recorded_at) : undefined}
+          />
+        </div>
+        <div className="grid grid-cols-2 gap-4">
+          <StatCard
+            label="อุณหภูมิเฉลี่ย"
+            value={formatNumber(stats?.avgTemperature)}
+            unit="°C"
+            accent="temp"
+            sub="ในช่วงที่เลือก"
+          />
+          <StatCard
+            label="ความชื้นเฉลี่ย"
+            value={formatNumber(stats?.avgHumidity)}
+            unit="%"
+            accent="humidity"
+            sub="ในช่วงที่เลือก"
+          />
+        </div>
+        <div className="grid grid-cols-2 gap-4">
+          <StatCard
+            label="ช่วงอุณหภูมิ"
+            value={`${formatNumber(stats?.minTemperature)}–${formatNumber(stats?.maxTemperature)}`}
+            unit="°C"
+            accent="temp"
+            sub="ต่ำสุด–สูงสุด"
+          />
+          <StatCard
+            label="ช่วงความชื้น"
+            value={`${formatNumber(stats?.minHumidity)}–${formatNumber(stats?.maxHumidity)}`}
+            unit="%"
+            accent="humidity"
+            sub="ต่ำสุด–สูงสุด"
+          />
+        </div>
       </section>
 
       <section className="flex flex-col gap-3">

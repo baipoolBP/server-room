@@ -5,7 +5,7 @@ import { computeBucketSeconds, resolveRange, RangeKey } from "@/lib/range";
 
 export const runtime = "nodejs";
 
-const VALID_RANGES: RangeKey[] = ["1h", "24h", "7d", "30d", "custom"];
+const VALID_RANGES: RangeKey[] = ["1h", "24h", "7d", "30d", "day", "custom"];
 
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
