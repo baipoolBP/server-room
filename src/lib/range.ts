@@ -9,7 +9,7 @@ export const RANGE_OPTIONS: { key: RangeKey; label: string }[] = [
   { key: "24h", label: "24 ชั่วโมง" },
   { key: "7d", label: "7 วัน" },
   { key: "30d", label: "30 วัน" },
-  { key: "day", label: "ประวัติรายวัน" },
+  { key: "day", label: "ข้อมูลย้อนหลัง" },
   { key: "custom", label: "กำหนดเอง" },
 ];
 
