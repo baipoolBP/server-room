@@ -26,11 +26,14 @@ SENSOR_TYPE = "temp_humidity_xy_md02"
 SERIAL_PORT = os.environ["SERIAL_PORT"]
 BAUDRATE = int(os.environ.get("BAUDRATE", "9600"))
 SLAVE_ADDRESS = int(os.environ.get("SLAVE_ADDRESS", "1"))
-# Holding register addresses (function code 03). Defaults match the common
-# XY-MD02 temperature/humidity sensor. Check your sensor's datasheet if you
-# use a different model - these are the two numbers most likely to change.
+# Register addresses + Modbus function code. Defaults verified against real
+# XY-MD02 hardware (function code 04 = read input registers). Some
+# clones/units expose these as holding registers (function code 03) instead -
+# if reads keep failing, scan your sensor (see scan_xy.py) or check its
+# datasheet and override READ_FUNCTION_CODE via .env.
 HUMIDITY_REGISTER = int(os.environ.get("HUMIDITY_REGISTER", "1"))
 TEMPERATURE_REGISTER = int(os.environ.get("TEMPERATURE_REGISTER", "2"))
+READ_FUNCTION_CODE = int(os.environ.get("READ_FUNCTION_CODE", "4"))
 
 MAX_READ_RETRIES = 3
 
@@ -54,10 +57,10 @@ def read(instrument: minimalmodbus.Instrument) -> dict[str, float]:
     for attempt in range(1, MAX_READ_RETRIES + 1):
         try:
             humidity = instrument.read_register(
-                HUMIDITY_REGISTER, number_of_decimals=1, functioncode=3, signed=False
+                HUMIDITY_REGISTER, number_of_decimals=1, functioncode=READ_FUNCTION_CODE, signed=False
             )
             temperature = instrument.read_register(
-                TEMPERATURE_REGISTER, number_of_decimals=1, functioncode=3, signed=True
+                TEMPERATURE_REGISTER, number_of_decimals=1, functioncode=READ_FUNCTION_CODE, signed=True
             )
             return {"temperature": temperature, "humidity": humidity}
         except (minimalmodbus.ModbusException, serial.SerialException, OSError) as exc:

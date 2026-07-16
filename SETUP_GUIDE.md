@@ -163,6 +163,7 @@
 | อาการ | สาเหตุที่เป็นไปได้ | วิธีแก้ |
 |---|---|---|
 | `Modbus read attempt` timeout ตลอด | สาย A/B สลับกัน, slave address ผิด, baud rate ไม่ตรง | เช็ค datasheet เซนเซอร์, ลองสลับ A/B, ยืนยัน `SLAVE_ADDRESS`/`BAUDRATE` |
+| อ่านค่าได้แต่เป็นตัวเลขแปลกๆ (ไม่ error แต่ค่าไม่สมเหตุสมผล) | `HUMIDITY_REGISTER`/`TEMPERATURE_REGISTER` หรือ function code ไม่ตรงกับเซนเซอร์รุ่น/clone ที่ใช้จริง (บางรุ่นใช้ function code 04 แทน 03 หรือ register คนละตำแหน่ง) | รัน `python raspberry-pi/scan_xy.py` (แก้ `PORT`/`SLAVE` ในไฟล์ก่อน) สแกนดูว่า function code+register ไหนให้ค่าที่สมเหตุสมผล แล้วตั้ง `HUMIDITY_REGISTER`/`TEMPERATURE_REGISTER`/`READ_FUNCTION_CODE` ใน `.env` ให้ตรง |
 | `No profiles/<x>.py found for SENSOR_TYPE=<x>` | สะกด `SENSOR_TYPE` ผิด หรือยังไม่มีไฟล์ profile นั้นจริง | เช็คว่ามีไฟล์ `raspberry-pi/profiles/<x>.py` อยู่จริง ชื่อไฟล์ต้องตรงกับ `SENSOR_TYPE` เป๊ะ (ไม่รวม `.py`) |
 | เว็บขึ้น "unauthorized" ตอน Pi ส่งข้อมูล | `API_KEY` ฝั่ง Pi ไม่ตรงกับ `INGEST_API_KEY` ใน Vercel | ตรวจสอบให้เหมือนกันทุกตัวอักษร (ไม่มีช่องว่างเกิน) |
 | เว็บขึ้น "unknown or missing sensor_type" | `SENSOR_TYPE` ฝั่ง Pi ไม่ได้ถูกเพิ่มไว้ใน `src/lib/sensorTypes.ts` ฝั่งเว็บ | เพิ่ม entry ให้ตรงกัน แล้ว deploy เว็บใหม่ |
