@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase";
 import { DEFAULT_DEVICE_ID } from "@/lib/config";
 import { computeBucketSeconds, resolveRange, RangeKey } from "@/lib/range";
+import { isMetricKey } from "@/lib/metrics";
+import { MetricReadingsResponse } from "@/lib/types";
 
 export const runtime = "nodejs";
 
@@ -12,6 +14,15 @@ export async function GET(request: NextRequest) {
   const rangeParam = (searchParams.get("range") ?? "24h") as RangeKey;
   const range = VALID_RANGES.includes(rangeParam) ? rangeParam : "24h";
   const deviceId = searchParams.get("device_id") || DEFAULT_DEVICE_ID;
+
+  const metricKeyParam = searchParams.get("metric_key");
+  if (!metricKeyParam || !isMetricKey(metricKeyParam)) {
+    return NextResponse.json(
+      { error: "`metric_key` is required and must be a known metric" },
+      { status: 400 }
+    );
+  }
+  const metricKey = metricKeyParam;
 
   const { from, to } = resolveRange(range, searchParams.get("from"), searchParams.get("to"));
 
@@ -27,20 +38,23 @@ export async function GET(request: NextRequest) {
   const [pointsResult, statsResult, latestResult] = await Promise.all([
     supabaseAdmin.rpc("get_bucketed_readings", {
       p_device_id: deviceId,
+      p_metric_key: metricKey,
       p_from: from.toISOString(),
       p_to: to.toISOString(),
       p_bucket_seconds: bucketSeconds,
     }),
     supabaseAdmin.rpc("get_bucketed_readings", {
       p_device_id: deviceId,
+      p_metric_key: metricKey,
       p_from: from.toISOString(),
       p_to: to.toISOString(),
       p_bucket_seconds: wholeRangeBucketSeconds,
     }),
     supabaseAdmin
       .from("readings")
-      .select("temperature, humidity, recorded_at")
+      .select("value, recorded_at")
       .eq("device_id", deviceId)
+      .eq("metric_key", metricKey)
       .order("recorded_at", { ascending: false })
       .limit(1)
       .maybeSingle(),
@@ -60,8 +74,9 @@ export async function GET(request: NextRequest) {
   }
 
   const stats = statsResult.data?.[0] ?? null;
+  const latest = latestResult.data;
 
-  return NextResponse.json({
+  const response: MetricReadingsResponse = {
     range,
     from: from.toISOString(),
     to: to.toISOString(),
@@ -69,15 +84,14 @@ export async function GET(request: NextRequest) {
     points: pointsResult.data ?? [],
     stats: stats
       ? {
-          avgTemperature: stats.avg_temperature,
-          minTemperature: stats.min_temperature,
-          maxTemperature: stats.max_temperature,
-          avgHumidity: stats.avg_humidity,
-          minHumidity: stats.min_humidity,
-          maxHumidity: stats.max_humidity,
+          avgValue: stats.avg_value,
+          minValue: stats.min_value,
+          maxValue: stats.max_value,
           sampleCount: stats.sample_count,
         }
       : null,
-    latest: latestResult.data,
-  });
+    latest: latest ? { value: latest.value, recordedAt: latest.recorded_at } : null,
+  };
+
+  return NextResponse.json(response);
 }

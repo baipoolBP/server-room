@@ -1,15 +1,25 @@
 #!/usr/bin/env python3
 """
-Reads temperature/humidity from an RS485 Modbus RTU sensor (default register
-map matches the common XY-MD02) and posts each reading to the dashboard's
-/api/ingest endpoint. Readings that fail to send (e.g. Wi-Fi outage) are
-queued in a local SQLite file and retried on the next cycle, so nothing is
-lost while the Pi is offline.
+Generic sensor runtime for the Raspberry Pi side of the project.
+
+Reads whichever sensor a `profiles/<SENSOR_TYPE>.py` module knows how to
+read (temperature/humidity, a current meter, etc. - see profiles/ for the
+list) and posts each reading to the dashboard's /api/ingest endpoint.
+Readings that fail to send (e.g. Wi-Fi outage) are queued in a local SQLite
+file and retried on the next cycle, so nothing is lost while the Pi is
+offline.
+
+Adding a new sensor type: write a new module in profiles/ that exposes
+SENSOR_TYPE, build_instrument(), and read(instrument) -> dict[str, float],
+then set SENSOR_TYPE in .env to that module's name. Nothing in this file
+needs to change.
 
 Run continuously (see sensor-dashboard.service for a systemd unit that
 restarts it automatically and starts it on boot).
 """
 
+import importlib
+import json
 import logging
 import os
 import signal
@@ -18,29 +28,12 @@ import sys
 import time
 from datetime import datetime, timezone
 
-import minimalmodbus
 import requests
-import serial
 from dotenv import load_dotenv
 
 load_dotenv()
 
-SERIAL_PORT = os.environ["SERIAL_PORT"]
-BAUDRATE = int(os.environ.get("BAUDRATE", "9600"))
-SLAVE_ADDRESS = int(os.environ.get("SLAVE_ADDRESS", "1"))
-HUMIDITY_REGISTER = int(os.environ.get("HUMIDITY_REGISTER", "1"))
-TEMPERATURE_REGISTER = int(os.environ.get("TEMPERATURE_REGISTER", "2"))
-
-SEND_INTERVAL_SECONDS = float(os.environ.get("SEND_INTERVAL_SECONDS", "60"))
-
-API_URL = os.environ["API_URL"]
-API_KEY = os.environ["API_KEY"]
-DEVICE_ID = os.environ.get("DEVICE_ID", "room-1")
-
-BUFFER_DB_PATH = os.environ.get("BUFFER_DB_PATH", "./buffer.sqlite3")
-
 REQUEST_TIMEOUT_SECONDS = 10
-MAX_READ_RETRIES = 3
 MAX_BUFFER_FLUSH_PER_CYCLE = 100
 
 logging.basicConfig(
@@ -48,6 +41,42 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
 log = logging.getLogger("sensor_reader")
+
+# Populated by _load_config(), called from the __main__ guard below so that
+# a missing/invalid environment variable raises *inside* that guard's
+# try/except instead of crashing during module import (a bare read like
+# `os.environ["SENSOR_TYPE"]` at module level runs before the __main__
+# guard is ever reached, so a try/except wrapped only around main() could
+# never actually catch it).
+SENSOR_TYPE: str
+SEND_INTERVAL_SECONDS: float
+API_URL: str
+API_KEY: str
+DEVICE_ID: str
+DEVICE_LABEL: str
+BUFFER_DB_PATH: str
+profile = None
+
+
+def _load_config() -> None:
+    global SENSOR_TYPE, SEND_INTERVAL_SECONDS, API_URL, API_KEY
+    global DEVICE_ID, DEVICE_LABEL, BUFFER_DB_PATH, profile
+
+    SENSOR_TYPE = os.environ["SENSOR_TYPE"]
+    SEND_INTERVAL_SECONDS = float(os.environ.get("SEND_INTERVAL_SECONDS", "60"))
+    API_URL = os.environ["API_URL"]
+    API_KEY = os.environ["API_KEY"]
+    DEVICE_ID = os.environ.get("DEVICE_ID", "room-1")
+    DEVICE_LABEL = os.environ.get("DEVICE_LABEL", "")
+    BUFFER_DB_PATH = os.environ.get("BUFFER_DB_PATH", "./buffer.sqlite3")
+
+    try:
+        profile = importlib.import_module(f"profiles.{SENSOR_TYPE}")
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            f"No profiles/{SENSOR_TYPE}.py found for SENSOR_TYPE={SENSOR_TYPE}"
+        ) from exc
+
 
 _shutdown_requested = False
 
@@ -62,37 +91,6 @@ signal.signal(signal.SIGINT, _handle_shutdown_signal)
 signal.signal(signal.SIGTERM, _handle_shutdown_signal)
 
 
-def build_instrument() -> minimalmodbus.Instrument:
-    instrument = minimalmodbus.Instrument(SERIAL_PORT, SLAVE_ADDRESS, mode=minimalmodbus.MODE_RTU)
-    instrument.serial.baudrate = BAUDRATE
-    instrument.serial.bytesize = 8
-    instrument.serial.parity = serial.PARITY_NONE
-    instrument.serial.stopbits = 1
-    instrument.serial.timeout = 1
-    instrument.clear_buffers_before_each_transaction = True
-    return instrument
-
-
-def read_sensor(instrument: minimalmodbus.Instrument) -> tuple[float, float]:
-    """Returns (temperature_celsius, humidity_percent). Raises on failure."""
-    last_error: Exception | None = None
-    for attempt in range(1, MAX_READ_RETRIES + 1):
-        try:
-            humidity = instrument.read_register(
-                HUMIDITY_REGISTER, number_of_decimals=1, functioncode=3, signed=False
-            )
-            temperature = instrument.read_register(
-                TEMPERATURE_REGISTER, number_of_decimals=1, functioncode=3, signed=True
-            )
-            return temperature, humidity
-        except (minimalmodbus.ModbusException, serial.SerialException, OSError) as exc:
-            last_error = exc
-            log.warning("Modbus read attempt %d/%d failed: %s", attempt, MAX_READ_RETRIES, exc)
-            time.sleep(0.5)
-    assert last_error is not None
-    raise last_error
-
-
 def init_buffer_db() -> sqlite3.Connection:
     conn = sqlite3.connect(BUFFER_DB_PATH)
     conn.execute(
@@ -100,8 +98,8 @@ def init_buffer_db() -> sqlite3.Connection:
         CREATE TABLE IF NOT EXISTS pending_readings (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             device_id TEXT NOT NULL,
-            temperature REAL NOT NULL,
-            humidity REAL NOT NULL,
+            sensor_type TEXT NOT NULL,
+            metrics_json TEXT NOT NULL,
             recorded_at TEXT NOT NULL
         )
         """
@@ -112,9 +110,14 @@ def init_buffer_db() -> sqlite3.Connection:
 
 def buffer_add(conn: sqlite3.Connection, payload: dict) -> None:
     conn.execute(
-        "INSERT INTO pending_readings (device_id, temperature, humidity, recorded_at) "
+        "INSERT INTO pending_readings (device_id, sensor_type, metrics_json, recorded_at) "
         "VALUES (?, ?, ?, ?)",
-        (payload["device_id"], payload["temperature"], payload["humidity"], payload["recorded_at"]),
+        (
+            payload["device_id"],
+            payload["sensor_type"],
+            json.dumps(payload["metrics"]),
+            payload["recorded_at"],
+        ),
     )
     conn.commit()
 
@@ -138,7 +141,7 @@ def send_payload(payload: dict) -> bool:
 
 def flush_buffer(conn: sqlite3.Connection) -> None:
     rows = conn.execute(
-        "SELECT id, device_id, temperature, humidity, recorded_at FROM pending_readings "
+        "SELECT id, device_id, sensor_type, metrics_json, recorded_at FROM pending_readings "
         "ORDER BY id ASC LIMIT ?",
         (MAX_BUFFER_FLUSH_PER_CYCLE,),
     ).fetchall()
@@ -146,11 +149,11 @@ def flush_buffer(conn: sqlite3.Connection) -> None:
         return
 
     log.info("Flushing %d buffered reading(s)...", len(rows))
-    for row_id, device_id, temperature, humidity, recorded_at in rows:
+    for row_id, device_id, sensor_type, metrics_json, recorded_at in rows:
         payload = {
             "device_id": device_id,
-            "temperature": temperature,
-            "humidity": humidity,
+            "sensor_type": sensor_type,
+            "metrics": json.loads(metrics_json),
             "recorded_at": recorded_at,
         }
         if send_payload(payload):
@@ -164,30 +167,31 @@ def flush_buffer(conn: sqlite3.Connection) -> None:
 
 def main() -> None:
     log.info(
-        "Starting sensor reader: port=%s slave=%s interval=%ss device_id=%s",
-        SERIAL_PORT,
-        SLAVE_ADDRESS,
+        "Starting sensor reader: sensor_type=%s interval=%ss device_id=%s",
+        SENSOR_TYPE,
         SEND_INTERVAL_SECONDS,
         DEVICE_ID,
     )
 
-    instrument = build_instrument()
+    instrument = profile.build_instrument()
     buffer_conn = init_buffer_db()
 
     while not _shutdown_requested:
         cycle_start = time.monotonic()
 
         try:
-            temperature, humidity = read_sensor(instrument)
+            metrics = profile.read(instrument)
             recorded_at = datetime.now(timezone.utc).isoformat()
-            log.info("Reading: %.1f°C, %.1f%% RH", temperature, humidity)
+            log.info("Reading: %s", metrics)
 
             payload = {
                 "device_id": DEVICE_ID,
-                "temperature": temperature,
-                "humidity": humidity,
+                "sensor_type": SENSOR_TYPE,
+                "metrics": metrics,
                 "recorded_at": recorded_at,
             }
+            if DEVICE_LABEL:
+                payload["label"] = DEVICE_LABEL
 
             flush_buffer(buffer_conn)
 
@@ -207,7 +211,11 @@ def main() -> None:
 
 if __name__ == "__main__":
     try:
+        _load_config()
         main()
     except KeyError as exc:
         log.error("Missing required environment variable: %s", exc)
+        sys.exit(1)
+    except RuntimeError as exc:
+        log.error(str(exc))
         sys.exit(1)

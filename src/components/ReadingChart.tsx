@@ -18,7 +18,7 @@ interface ReadingChartProps {
   color: string;
   points: BucketPoint[];
   bucketSeconds: number;
-  metricKey: "temperature" | "humidity";
+  metricKey: string;
 }
 
 interface TooltipPayloadItem {
@@ -29,30 +29,25 @@ function CustomTooltip({
   active,
   payload,
   unit,
-  metricKey,
   color,
 }: {
   active?: boolean;
   payload?: TooltipPayloadItem[];
   unit: string;
-  metricKey: "temperature" | "humidity";
   color: string;
 }) {
   if (!active || !payload?.length) return null;
   const point = payload[0].payload;
-  const avg = point[`avg_${metricKey}`];
-  const min = point[`min_${metricKey}`];
-  const max = point[`max_${metricKey}`];
 
   return (
     <div className="rounded-lg border border-[var(--border-hairline)] bg-surface px-3 py-2 text-xs shadow-md">
       <p className="text-ink-muted">{formatDateTime(point.bucket)}</p>
       <p className="mt-1 flex items-center gap-1.5 text-sm font-semibold text-ink-primary">
         <span className="inline-block h-0.5 w-3 rounded-full" style={{ background: color }} />
-        {formatNumber(avg)} {unit}
+        {formatNumber(point.avg_value)} {unit}
       </p>
       <p className="mt-0.5 text-ink-muted">
-        ต่ำสุด {formatNumber(min)} · สูงสุด {formatNumber(max)} {unit}
+        ต่ำสุด {formatNumber(point.min_value)} · สูงสุด {formatNumber(point.max_value)} {unit}
       </p>
       <p className="text-ink-muted">{point.sample_count} ตัวอย่าง</p>
     </div>
@@ -106,11 +101,11 @@ export function ReadingChart({
               />
               <Tooltip
                 cursor={{ stroke: "var(--baseline)", strokeWidth: 1 }}
-                content={<CustomTooltip unit={unit} metricKey={metricKey} color={color} />}
+                content={<CustomTooltip unit={unit} color={color} />}
               />
               <Area
                 type="monotone"
-                dataKey={`avg_${metricKey}`}
+                dataKey="avg_value"
                 stroke={color}
                 strokeWidth={2}
                 strokeLinecap="round"

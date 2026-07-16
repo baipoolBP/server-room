@@ -5,10 +5,12 @@ import { StatCard } from "@/components/StatCard";
 import { StatusPill } from "@/components/StatusPill";
 import { RangeSelector } from "@/components/RangeSelector";
 import { ReadingChart } from "@/components/ReadingChart";
-import { DataTable } from "@/components/DataTable";
+import { DataTable, MetricSeries } from "@/components/DataTable";
 import { RangeKey } from "@/lib/range";
 import { formatDateTime, formatNumber } from "@/lib/format";
-import { ReadingsResponse } from "@/lib/types";
+import { DevicesResponse, MetricReadingsResponse } from "@/lib/types";
+import { METRIC_DEFINITIONS, MetricKey } from "@/lib/metrics";
+import { isSensorType, SENSOR_TYPE_METRICS } from "@/lib/sensorTypes";
 
 const POLL_MS: Partial<Record<RangeKey, number>> = {
   "1h": 30_000,
@@ -21,25 +23,69 @@ export function Dashboard({ deviceId }: { deviceId: string }) {
   const [range, setRange] = useState<RangeKey>("24h");
   const [customFrom, setCustomFrom] = useState(() => new Date(Date.now() - 24 * 60 * 60 * 1000));
   const [customTo, setCustomTo] = useState(() => new Date());
-  const [data, setData] = useState<ReadingsResponse | null>(null);
+
+  // Which metrics this device reports - discovered from its sensor_type via
+  // /api/devices before we know what to fetch/render. null = still loading.
+  const [metricKeys, setMetricKeys] = useState<MetricKey[] | null>(null);
+  const [deviceLabel, setDeviceLabel] = useState("");
+  const [deviceNotFound, setDeviceNotFound] = useState(false);
+
+  const [readingsByMetric, setReadingsByMetric] = useState<Record<string, MetricReadingsResponse>>(
+    {}
+  );
   const [error, setError] = useState<string | null>(null);
   const [isFetching, setIsFetching] = useState(false);
   const requestIdRef = useRef(0);
 
+  useEffect(() => {
+    let cancelled = false;
+    async function loadDevice() {
+      try {
+        const res = await fetch("/api/devices", { cache: "no-store" });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const json: DevicesResponse = await res.json();
+        const device = json.devices.find((d) => d.deviceId === deviceId);
+        if (cancelled) return;
+        if (!device || !isSensorType(device.sensorType)) {
+          setDeviceNotFound(true);
+          return;
+        }
+        setDeviceLabel(device.label);
+        setMetricKeys([...SENSOR_TYPE_METRICS[device.sensorType]]);
+      } catch {
+        if (!cancelled) setDeviceNotFound(true);
+      }
+    }
+    loadDevice();
+    return () => {
+      cancelled = true;
+    };
+  }, [deviceId]);
+
   const load = useCallback(async () => {
+    if (!metricKeys) return;
     const requestId = ++requestIdRef.current;
     setIsFetching(true);
     try {
-      const params = new URLSearchParams({ range, device_id: deviceId });
-      if (range === "custom" || range === "day") {
-        params.set("from", customFrom.toISOString());
-        params.set("to", customTo.toISOString());
-      }
-      const res = await fetch(`/api/readings?${params.toString()}`, { cache: "no-store" });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const json: ReadingsResponse = await res.json();
+      const entries = await Promise.all(
+        metricKeys.map(async (metricKey) => {
+          const params = new URLSearchParams({
+            range,
+            device_id: deviceId,
+            metric_key: metricKey,
+          });
+          if (range === "custom" || range === "day") {
+            params.set("from", customFrom.toISOString());
+            params.set("to", customTo.toISOString());
+          }
+          const res = await fetch(`/api/readings?${params.toString()}`, { cache: "no-store" });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const json: MetricReadingsResponse = await res.json();
+          return [metricKey, json] as const;
+        })
+      );
       if (requestId === requestIdRef.current) {
-        setData(json);
+        setReadingsByMetric(Object.fromEntries(entries));
         setError(null);
       }
     } catch {
@@ -49,16 +95,17 @@ export function Dashboard({ deviceId }: { deviceId: string }) {
     } finally {
       if (requestId === requestIdRef.current) setIsFetching(false);
     }
-  }, [range, customFrom, customTo, deviceId]);
+  }, [metricKeys, range, customFrom, customTo, deviceId]);
 
   useEffect(() => {
+    if (!metricKeys) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional fetch-on-mount/range-change, requestIdRef guards stale writes
     load();
     const pollMs = POLL_MS[range];
     if (!pollMs) return;
     const id = setInterval(load, pollMs);
     return () => clearInterval(id);
-  }, [load, range]);
+  }, [load, range, metricKeys]);
 
   function handleRangeChange(next: RangeKey, from?: Date, to?: Date) {
     setRange(next);
@@ -68,73 +115,97 @@ export function Dashboard({ deviceId }: { deviceId: string }) {
     }
   }
 
-  const latest = data?.latest ?? null;
-  const stats = data?.stats ?? null;
-  const points = data?.points ?? [];
-  const bucketSeconds = data?.bucketSeconds ?? 60;
+  if (deviceNotFound) {
+    return (
+      <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
+        <p className="text-sm text-ink-secondary">ไม่พบข้อมูลอุปกรณ์ &quot;{deviceId}&quot;</p>
+      </div>
+    );
+  }
+
+  if (!metricKeys) {
+    return (
+      <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
+        <p className="text-sm text-ink-muted">กำลังโหลด...</p>
+      </div>
+    );
+  }
+
+  const overallLatestAt = metricKeys.reduce<string | null>((latest, key) => {
+    const at = readingsByMetric[key]?.latest?.recordedAt ?? null;
+    if (!at) return latest;
+    return !latest || at > latest ? at : latest;
+  }, null);
+
+  const gridStyle = { gridTemplateColumns: `repeat(${metricKeys.length}, minmax(0, 1fr))` };
+
+  const series: MetricSeries[] = metricKeys.map((key) => ({
+    metricKey: key,
+    label: METRIC_DEFINITIONS[key].label,
+    unit: METRIC_DEFINITIONS[key].unit,
+    points: readingsByMetric[key]?.points ?? [],
+  }));
 
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-6 px-4 py-8 sm:px-6 lg:px-8">
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold text-ink-primary">
-            แดชบอร์ดตรวจวัดอุณหภูมิ &amp; ความชื้น
-          </h1>
+          <h1 className="text-2xl font-semibold text-ink-primary">{deviceLabel || deviceId}</h1>
           <p className="mt-1 text-sm text-ink-secondary">
             จุดวัด: <span className="font-medium text-ink-primary">{deviceId}</span>
           </p>
         </div>
-        <StatusPill lastRecordedAt={latest?.recorded_at} />
+        <StatusPill lastRecordedAt={overallLatestAt} />
       </header>
 
       <section className="flex flex-col gap-4">
-        <div className="grid grid-cols-2 gap-4">
-          <StatCard
-            label="อุณหภูมิปัจจุบัน"
-            value={formatNumber(latest?.temperature)}
-            unit="°C"
-            accent="temp"
-            sub={latest ? formatDateTime(latest.recorded_at) : undefined}
-          />
-          <StatCard
-            label="ความชื้นปัจจุบัน"
-            value={formatNumber(latest?.humidity)}
-            unit="%"
-            accent="humidity"
-            sub={latest ? formatDateTime(latest.recorded_at) : undefined}
-          />
+        <div className="grid gap-4" style={gridStyle}>
+          {metricKeys.map((key) => {
+            const def = METRIC_DEFINITIONS[key];
+            const latest = readingsByMetric[key]?.latest;
+            return (
+              <StatCard
+                key={key}
+                label={`${def.label}ปัจจุบัน`}
+                value={formatNumber(latest?.value)}
+                unit={def.unit}
+                accentColor={def.color}
+                sub={latest ? formatDateTime(latest.recordedAt) : undefined}
+              />
+            );
+          })}
         </div>
-        <div className="grid grid-cols-2 gap-4">
-          <StatCard
-            label="อุณหภูมิเฉลี่ย"
-            value={formatNumber(stats?.avgTemperature)}
-            unit="°C"
-            accent="temp"
-            sub="ในช่วงที่เลือก"
-          />
-          <StatCard
-            label="ความชื้นเฉลี่ย"
-            value={formatNumber(stats?.avgHumidity)}
-            unit="%"
-            accent="humidity"
-            sub="ในช่วงที่เลือก"
-          />
+        <div className="grid gap-4" style={gridStyle}>
+          {metricKeys.map((key) => {
+            const def = METRIC_DEFINITIONS[key];
+            const stats = readingsByMetric[key]?.stats;
+            return (
+              <StatCard
+                key={key}
+                label={`${def.label}เฉลี่ย`}
+                value={formatNumber(stats?.avgValue)}
+                unit={def.unit}
+                accentColor={def.color}
+                sub="ในช่วงที่เลือก"
+              />
+            );
+          })}
         </div>
-        <div className="grid grid-cols-2 gap-4">
-          <StatCard
-            label="ช่วงอุณหภูมิ"
-            value={`${formatNumber(stats?.minTemperature)}–${formatNumber(stats?.maxTemperature)}`}
-            unit="°C"
-            accent="temp"
-            sub="ต่ำสุด–สูงสุด"
-          />
-          <StatCard
-            label="ช่วงความชื้น"
-            value={`${formatNumber(stats?.minHumidity)}–${formatNumber(stats?.maxHumidity)}`}
-            unit="%"
-            accent="humidity"
-            sub="ต่ำสุด–สูงสุด"
-          />
+        <div className="grid gap-4" style={gridStyle}>
+          {metricKeys.map((key) => {
+            const def = METRIC_DEFINITIONS[key];
+            const stats = readingsByMetric[key]?.stats;
+            return (
+              <StatCard
+                key={key}
+                label={`ช่วง${def.label}`}
+                value={`${formatNumber(stats?.minValue)}–${formatNumber(stats?.maxValue)}`}
+                unit={def.unit}
+                accentColor={def.color}
+                sub="ต่ำสุด–สูงสุด"
+              />
+            );
+          })}
         </div>
       </section>
 
@@ -150,27 +221,25 @@ export function Dashboard({ deviceId }: { deviceId: string }) {
 
       <section
         className="grid grid-cols-1 gap-4 lg:grid-cols-2 transition-opacity"
-        style={{ opacity: isFetching && !data ? 0.5 : 1 }}
+        style={{ opacity: isFetching && Object.keys(readingsByMetric).length === 0 ? 0.5 : 1 }}
       >
-        <ReadingChart
-          title="อุณหภูมิตามเวลา (°C)"
-          unit="°C"
-          color="var(--series-temp)"
-          points={points}
-          bucketSeconds={bucketSeconds}
-          metricKey="temperature"
-        />
-        <ReadingChart
-          title="ความชื้นตามเวลา (%)"
-          unit="%"
-          color="var(--series-humidity)"
-          points={points}
-          bucketSeconds={bucketSeconds}
-          metricKey="humidity"
-        />
+        {metricKeys.map((key) => {
+          const def = METRIC_DEFINITIONS[key];
+          return (
+            <ReadingChart
+              key={key}
+              title={`${def.label}ตามเวลา (${def.unit})`}
+              unit={def.unit}
+              color={def.color}
+              points={readingsByMetric[key]?.points ?? []}
+              bucketSeconds={readingsByMetric[key]?.bucketSeconds ?? 60}
+              metricKey={key}
+            />
+          );
+        })}
       </section>
 
-      <DataTable points={points} />
+      <DataTable series={series} />
     </div>
   );
 }
