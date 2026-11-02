@@ -17,6 +17,18 @@
   --series-temp-wash: rgba(42, 120, 214, 0.1);
   --series-humidity: #1baf7a;
   --series-humidity-wash: rgba(27, 175, 122, 0.1);
+  --series-voltage: #008300;
+  --series-voltage-wash: rgba(0, 131, 0, 0.1);
+  --series-current: #e87ba4;
+  --series-current-wash: rgba(232, 123, 164, 0.1);
+  --series-power: #eda100;
+  --series-power-wash: rgba(237, 161, 0, 0.1);
+  --series-energy: #eb6834;
+  --series-energy-wash: rgba(235, 104, 52, 0.1);
+  --series-frequency: #4a3aa7;
+  --series-frequency-wash: rgba(74, 58, 167, 0.1);
+  --series-power-factor: #e34948;
+  --series-power-factor-wash: rgba(227, 73, 72, 0.1);
 
   --status-good: #0ca30c;
   --status-warning: #fab219;
@@ -35,6 +47,12 @@
   --color-baseline: var(--baseline);
   --color-series-temp: var(--series-temp);
   --color-series-humidity: var(--series-humidity);
+  --color-series-voltage: var(--series-voltage);
+  --color-series-current: var(--series-current);
+  --color-series-power: var(--series-power);
+  --color-series-energy: var(--series-energy);
+  --color-series-frequency: var(--series-frequency);
+  --color-series-power-factor: var(--series-power-factor);
   --color-status-good: var(--status-good);
   --color-status-warning: var(--status-warning);
   --color-status-critical: var(--status-critical);
@@ -60,6 +78,18 @@
     --series-temp-wash: rgba(57, 135, 229, 0.14);
     --series-humidity: #199e70;
     --series-humidity-wash: rgba(25, 158, 112, 0.14);
+    --series-voltage: #008300;
+    --series-voltage-wash: rgba(0, 131, 0, 0.14);
+    --series-current: #d55181;
+    --series-current-wash: rgba(213, 81, 129, 0.14);
+    --series-power: #c98500;
+    --series-power-wash: rgba(201, 133, 0, 0.14);
+    --series-energy: #d95926;
+    --series-energy-wash: rgba(217, 89, 38, 0.14);
+    --series-frequency: #9085e9;
+    --series-frequency-wash: rgba(144, 133, 233, 0.14);
+    --series-power-factor: #e66767;
+    --series-power-factor-wash: rgba(230, 103, 103, 0.14);
 
     --status-good: #0ca30c;
     --status-warning: #fab219;

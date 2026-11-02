@@ -6,6 +6,16 @@ import { MetricKey } from "@/lib/metrics";
 // else in the ingest API, database, or dashboard needs to change.
 export const SENSOR_TYPE_METRICS = {
   temp_humidity_xy_md02: ["temperature", "humidity"],
+  room_climate_power: [
+    "temperature",
+    "humidity",
+    "voltage",
+    "current",
+    "power",
+    "energy",
+    "frequency",
+    "power_factor",
+  ],
 } as const satisfies Record<string, readonly MetricKey[]>;
 
 export type SensorType = keyof typeof SENSOR_TYPE_METRICS;
