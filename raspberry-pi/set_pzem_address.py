@@ -39,29 +39,40 @@ inst.serial.parity = serial.PARITY_NONE
 inst.serial.stopbits = 1
 inst.serial.timeout = 1
 
+def try_read(address: int) -> int | None:
+    """Returns the register value if `address` responds, else None."""
+    inst.address = address
+    try:
+        return inst.read_register(PZEM_ADDRESS_REGISTER, number_of_decimals=0, functioncode=3, signed=False)
+    except (minimalmodbus.ModbusException, serial.SerialException, OSError):
+        return None
+
+
 print(f"Reading current address from slave {CURRENT_ADDRESS}...")
-current = inst.read_register(PZEM_ADDRESS_REGISTER, number_of_decimals=0, functioncode=3, signed=False)
-print(f"Device reports address: {current}")
+current = try_read(CURRENT_ADDRESS)
+print(f"Device reports: {current}")
 
 print(f"Writing new address {NEW_ADDRESS}...")
+inst.address = CURRENT_ADDRESS
 inst.write_register(PZEM_ADDRESS_REGISTER, NEW_ADDRESS, number_of_decimals=0, functioncode=6, signed=False)
 
-print("Verifying by reading back from the new address...")
-inst.address = NEW_ADDRESS
-verify = inst.read_register(PZEM_ADDRESS_REGISTER, number_of_decimals=0, functioncode=3, signed=False)
-if verify != NEW_ADDRESS:
-    print(f"WARNING: expected {NEW_ADDRESS} but device reports {verify} - check wiring and retry")
-    raise SystemExit(1)
+print("Checking whether the new address responds immediately (not all devices do)...")
+responds_at_new = try_read(NEW_ADDRESS) == NEW_ADDRESS
+responds_at_old = try_read(CURRENT_ADDRESS) is not None
 
-print(f"Confirming old address {CURRENT_ADDRESS} no longer responds...")
-inst.address = CURRENT_ADDRESS
-try:
-    inst.read_register(PZEM_ADDRESS_REGISTER, number_of_decimals=0, functioncode=3, signed=False)
+if responds_at_new and not responds_at_old:
+    print(f"Success so far: PZEM answers at {NEW_ADDRESS} and no longer at {CURRENT_ADDRESS}.")
+else:
     print(
-        f"WARNING: old address {CURRENT_ADDRESS} still responds too - the write may not have "
-        "really taken effect (some PZEM clones echo back a written value from a scratch "
-        "register without actually changing the device's address). Power-cycle the PZEM "
-        "alone and re-run scan_pzem_address.py to confirm which address survives a reboot."
+        f"No live change yet (new address responds: {responds_at_new}, old still responds: "
+        f"{responds_at_old}). This is often NORMAL - many Modbus devices only start using a "
+        "new address after a power cycle, even though the write itself succeeded."
     )
-except (minimalmodbus.ModbusException, serial.SerialException, OSError):
-    print(f"Success: PZEM is now at address {NEW_ADDRESS} (and no longer answers at {CURRENT_ADDRESS})")
+
+print()
+print("Next step either way: power-cycle the PZEM (AC off, wait a few seconds, AC back on),")
+print("with nothing else touched, then run:")
+print("    python3 scan_pzem_address.py")
+print(f"If it now answers at {NEW_ADDRESS}, the change stuck. If it's still at {CURRENT_ADDRESS},")
+print("this unit doesn't persist address changes to non-volatile memory and a different")
+print("approach is needed (e.g. a second USB-RS485 adapter so each device keeps its own bus).")
