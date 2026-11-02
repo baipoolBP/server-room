@@ -9,7 +9,7 @@ import { DataTable, MetricSeries } from "@/components/DataTable";
 import { RangeKey } from "@/lib/range";
 import { formatDateTime, formatNumber } from "@/lib/format";
 import { DevicesResponse, MetricReadingsResponse } from "@/lib/types";
-import { METRIC_DEFINITIONS, MetricKey } from "@/lib/metrics";
+import { METRIC_DEFINITIONS, METRIC_GROUPS, MetricGroup, MetricKey } from "@/lib/metrics";
 import { isSensorType, SENSOR_TYPE_METRICS } from "@/lib/sensorTypes";
 
 const POLL_MS: Partial<Record<RangeKey, number>> = {
@@ -137,7 +137,11 @@ export function Dashboard({ deviceId }: { deviceId: string }) {
     return !latest || at > latest ? at : latest;
   }, null);
 
-  const gridStyle = { gridTemplateColumns: `repeat(${metricKeys.length}, minmax(0, 1fr))` };
+  // Group metrics (e.g. climate vs power) so a sensor reporting many of them
+  // reads as separate labeled sections instead of one long cramped row.
+  const groupedKeys = (Object.keys(METRIC_GROUPS) as MetricGroup[])
+    .map((group) => ({ group, keys: metricKeys.filter((key) => METRIC_DEFINITIONS[key].group === group) }))
+    .filter(({ keys }) => keys.length > 0);
 
   const series: MetricSeries[] = metricKeys.map((key) => ({
     metricKey: key,
@@ -158,55 +162,62 @@ export function Dashboard({ deviceId }: { deviceId: string }) {
         <StatusPill lastRecordedAt={overallLatestAt} />
       </header>
 
-      <section className="flex flex-col gap-4">
-        <div className="grid gap-4" style={gridStyle}>
-          {metricKeys.map((key) => {
-            const def = METRIC_DEFINITIONS[key];
-            const latest = readingsByMetric[key]?.latest;
-            return (
-              <StatCard
-                key={key}
-                label={`${def.label}ปัจจุบัน`}
-                value={formatNumber(latest?.value)}
-                unit={def.unit}
-                accentColor={def.color}
-                sub={latest ? formatDateTime(latest.recordedAt) : undefined}
-              />
-            );
-          })}
-        </div>
-        <div className="grid gap-4" style={gridStyle}>
-          {metricKeys.map((key) => {
-            const def = METRIC_DEFINITIONS[key];
-            const stats = readingsByMetric[key]?.stats;
-            return (
-              <StatCard
-                key={key}
-                label={`${def.label}เฉลี่ย`}
-                value={formatNumber(stats?.avgValue)}
-                unit={def.unit}
-                accentColor={def.color}
-                sub="ในช่วงที่เลือก"
-              />
-            );
-          })}
-        </div>
-        <div className="grid gap-4" style={gridStyle}>
-          {metricKeys.map((key) => {
-            const def = METRIC_DEFINITIONS[key];
-            const stats = readingsByMetric[key]?.stats;
-            return (
-              <StatCard
-                key={key}
-                label={`ช่วง${def.label}`}
-                value={`${formatNumber(stats?.minValue)}–${formatNumber(stats?.maxValue)}`}
-                unit={def.unit}
-                accentColor={def.color}
-                sub="ต่ำสุด–สูงสุด"
-              />
-            );
-          })}
-        </div>
+      <section className="flex flex-col gap-6">
+        {groupedKeys.map(({ group, keys }) => (
+          <div key={group} className="flex flex-col gap-3">
+            {groupedKeys.length > 1 ? (
+              <h2 className="text-sm font-medium text-ink-secondary">{METRIC_GROUPS[group]}</h2>
+            ) : null}
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+              {keys.map((key) => {
+                const def = METRIC_DEFINITIONS[key];
+                const latest = readingsByMetric[key]?.latest;
+                return (
+                  <StatCard
+                    key={key}
+                    label={`${def.label}ปัจจุบัน`}
+                    value={formatNumber(latest?.value)}
+                    unit={def.unit}
+                    accentColor={def.color}
+                    sub={latest ? formatDateTime(latest.recordedAt) : undefined}
+                  />
+                );
+              })}
+            </div>
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+              {keys.map((key) => {
+                const def = METRIC_DEFINITIONS[key];
+                const stats = readingsByMetric[key]?.stats;
+                return (
+                  <StatCard
+                    key={key}
+                    label={`${def.label}เฉลี่ย`}
+                    value={formatNumber(stats?.avgValue)}
+                    unit={def.unit}
+                    accentColor={def.color}
+                    sub="ในช่วงที่เลือก"
+                  />
+                );
+              })}
+            </div>
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+              {keys.map((key) => {
+                const def = METRIC_DEFINITIONS[key];
+                const stats = readingsByMetric[key]?.stats;
+                return (
+                  <StatCard
+                    key={key}
+                    label={`ช่วง${def.label}`}
+                    value={`${formatNumber(stats?.minValue)}–${formatNumber(stats?.maxValue)}`}
+                    unit={def.unit}
+                    accentColor={def.color}
+                    sub="ต่ำสุด–สูงสุด"
+                  />
+                );
+              })}
+            </div>
+          </div>
+        ))}
       </section>
 
       <section className="flex flex-col gap-3">
@@ -220,23 +231,32 @@ export function Dashboard({ deviceId }: { deviceId: string }) {
       </section>
 
       <section
-        className="grid grid-cols-1 gap-4 lg:grid-cols-2 transition-opacity"
+        className="flex flex-col gap-6 transition-opacity"
         style={{ opacity: isFetching && Object.keys(readingsByMetric).length === 0 ? 0.5 : 1 }}
       >
-        {metricKeys.map((key) => {
-          const def = METRIC_DEFINITIONS[key];
-          return (
-            <ReadingChart
-              key={key}
-              title={`${def.label}ตามเวลา (${def.unit})`}
-              unit={def.unit}
-              color={def.color}
-              points={readingsByMetric[key]?.points ?? []}
-              bucketSeconds={readingsByMetric[key]?.bucketSeconds ?? 60}
-              metricKey={key}
-            />
-          );
-        })}
+        {groupedKeys.map(({ group, keys }) => (
+          <div key={group} className="flex flex-col gap-3">
+            {groupedKeys.length > 1 ? (
+              <h2 className="text-sm font-medium text-ink-secondary">{METRIC_GROUPS[group]}</h2>
+            ) : null}
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+              {keys.map((key) => {
+                const def = METRIC_DEFINITIONS[key];
+                return (
+                  <ReadingChart
+                    key={key}
+                    title={`${def.label}ตามเวลา (${def.unit})`}
+                    unit={def.unit}
+                    color={def.color}
+                    points={readingsByMetric[key]?.points ?? []}
+                    bucketSeconds={readingsByMetric[key]?.bucketSeconds ?? 60}
+                    metricKey={key}
+                  />
+                );
+              })}
+            </div>
+          </div>
+        ))}
       </section>
 
       <DataTable series={series} />
