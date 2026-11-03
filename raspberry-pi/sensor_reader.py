@@ -14,6 +14,11 @@ SENSOR_TYPE, build_instrument(), and read(instrument) -> dict[str, float],
 then set SENSOR_TYPE in .env to that module's name. Nothing in this file
 needs to change.
 
+Optionally also relays each reading to a Samkoon PLC over a second RS485
+link (see plc_relay.py) so it can forward the data on to an HMI display -
+set PLC_SERIAL_PORT in .env to enable this; leave it unset to skip it
+entirely (the sensor -> web pipeline doesn't need the PLC at all).
+
 Run continuously (see sensor-dashboard.service for a systemd unit that
 restarts it automatically and starts it on boot).
 """
@@ -55,12 +60,13 @@ API_KEY: str
 DEVICE_ID: str
 DEVICE_LABEL: str
 BUFFER_DB_PATH: str
+PLC_ENABLED: bool
 profile = None
 
 
 def _load_config() -> None:
     global SENSOR_TYPE, SEND_INTERVAL_SECONDS, API_URL, API_KEY
-    global DEVICE_ID, DEVICE_LABEL, BUFFER_DB_PATH, profile
+    global DEVICE_ID, DEVICE_LABEL, BUFFER_DB_PATH, PLC_ENABLED, profile
 
     SENSOR_TYPE = os.environ["SENSOR_TYPE"]
     SEND_INTERVAL_SECONDS = float(os.environ.get("SEND_INTERVAL_SECONDS", "60"))
@@ -69,6 +75,7 @@ def _load_config() -> None:
     DEVICE_ID = os.environ.get("DEVICE_ID", "room-1")
     DEVICE_LABEL = os.environ.get("DEVICE_LABEL", "")
     BUFFER_DB_PATH = os.environ.get("BUFFER_DB_PATH", "./buffer.sqlite3")
+    PLC_ENABLED = bool(os.environ.get("PLC_SERIAL_PORT"))
 
     try:
         profile = importlib.import_module(f"profiles.{SENSOR_TYPE}")
@@ -176,6 +183,13 @@ def main() -> None:
     instrument = profile.build_instrument()
     buffer_conn = init_buffer_db()
 
+    plc_instrument = None
+    if PLC_ENABLED:
+        import plc_relay
+
+        plc_instrument = plc_relay.build_plc_instrument()
+        log.info("PLC relay enabled: %s", os.environ["PLC_SERIAL_PORT"])
+
     while not _shutdown_requested:
         cycle_start = time.monotonic()
 
@@ -183,6 +197,9 @@ def main() -> None:
             metrics = profile.read(instrument)
             recorded_at = datetime.now(timezone.utc).isoformat()
             log.info("Reading: %s", metrics)
+
+            if plc_instrument is not None:
+                plc_relay.write_metrics_to_plc(plc_instrument, metrics)
 
             payload = {
                 "device_id": DEVICE_ID,
