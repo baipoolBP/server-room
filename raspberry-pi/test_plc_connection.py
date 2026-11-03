@@ -49,15 +49,23 @@ inst.serial.stopbits = 1
 inst.serial.timeout = 1
 
 
+COMM_RETRIES = 3
+
+
 def try_read(address: int) -> int | None:
-    try:
-        return inst.read_register(address, number_of_decimals=0, functioncode=3, signed=False)
-    except minimalmodbus.ModbusException:
-        return None
-    except (serial.SerialException, OSError) as exc:
-        print(f"  COMMUNICATION FAILED at address {address}: {exc}")
-        print("  Stopping - check wiring/PORT, and make sure SamSoar2022's Monitor is closed.")
-        raise SystemExit(1)
+    """Returns the register value, None if the PLC said "illegal address",
+    or None (after retries + a warning) if the line itself glitched."""
+    last_comm_error: Exception | None = None
+    for attempt in range(1, COMM_RETRIES + 1):
+        try:
+            return inst.read_register(address, number_of_decimals=0, functioncode=3, signed=False)
+        except minimalmodbus.ModbusException:
+            return None  # a real "illegal address" response - not a glitch, don't retry
+        except (serial.SerialException, OSError) as exc:
+            last_comm_error = exc
+            time.sleep(0.1)
+    print(f"  (address {address}: comm glitch after {COMM_RETRIES} retries - {last_comm_error} - skipping)")
+    return None
 
 
 print(f"Looking for D0's value ({TEST_VALUE}) somewhere in addresses 0-{COARSE_MAX}...")
@@ -73,6 +81,8 @@ for address in range(0, COARSE_MAX + 1, COARSE_STEP):
         print(f"  address {address}: responded, value = {value}")
         if value == TEST_VALUE:
             candidates.append(address)
+    if checked % 20 == 0:
+        print(f"  ...still scanning, checked {checked} addresses so far (up to {address})")
     time.sleep(0.03)
 
 print(f"\nCoarse pass done ({checked} addresses checked).")
