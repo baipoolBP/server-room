@@ -1,29 +1,28 @@
 #!/usr/bin/env python3
 """
-Diagnostic script: tests whether the Pi can talk to the Samkoon PLC
-(FAT-16MT-DC-E) over RS485 as a Modbus RTU master, with the PLC acting as
-slave (COM0 was configured as "Modbus slave", station number 1, 9600-8-N-1
-in SamSoar2022 and downloaded to the PLC).
+Diagnostic script: finds which Modbus holding register address (function
+code 03) corresponds to the PLC's D0, by searching for a known, distinctive
+value instead of guessing addresses blindly.
 
-The exact mapping from the PLC's internal D registers to Modbus addresses
-hasn't been confirmed yet for this unit - a first attempt (function code
-03, address 0) got "illegal data address" back, which means the PLC DID
-receive and understand the request (wiring/station/baud are all correct)
-but address 0 isn't valid for that function code. This version sweeps a
-small range of addresses with both function code 03 (read holding
-registers) and 04 (read input registers) to find which ones actually
-respond, instead of guessing one address/function code at a time.
+Setup before running:
+  1. In SamSoar2022, close the "Monitor" window if it's open (having both
+     the Monitor (over USB) and this script (over RS485) talking to the
+     PLC at the same time seems to cause "device reports readiness to
+     read but returned no data" errors - probably simple PLC firmware
+     that can't service two communication requests at once).
+  2. Use SamSoar2022's "Element Initialize" or "Monitor" (write mode) to
+     set D0 to TEST_VALUE below (55555) directly through the software -
+     not over Modbus. This gives us a known value to search for.
+  3. Wire the PLC's COM0 screw-terminal A/B to a USB-RS485 adapter on the
+     Pi (separate from the XY-MD02/PZEM adapter).
 
-Run this with the PLC's COM0 screw-terminal A/B wired to a USB-RS485
-adapter on the Pi (separate from the XY-MD02/PZEM adapter - don't share
-that bus, this PLC defaults to station 1 which collides with XY-MD02).
-
-Before running, open SamSoar2022's Monitor on D0 (and maybe D1-D5) so you
-can watch live whether writes from this script actually change anything
-in the PLC.
-
-Edit PORT below, then:
+Then edit PORT below and run:
     python3 test_plc_connection.py
+
+A first pass of addresses 0-9 all returned "illegal data address" (a real
+Modbus exception, not a timeout) - so D registers exist somewhere past
+that, just not at the address we guessed. This script sweeps a wide range
+in coarse steps first, then narrows down once it finds TEST_VALUE.
 """
 
 import time
@@ -34,7 +33,13 @@ import serial
 # Edit this to match your hardware before running.
 PORT = "/dev/ttyUSB0"  # or the /dev/serial/by-id/... path - whichever adapter is wired to the PLC
 STATION_NUMBER = 1  # matches COM0's "Station number" in SamSoar2022
-SCAN_ADDRESSES = range(0, 21)  # D0..D20 - small range just to find what responds
+TEST_VALUE = 55555  # set D0 to this value in SamSoar2022 before running
+
+# D register range on this PLC is documented as 0-8303 (SamSoar2022 Project
+# Setting > Device > More info). Sweep the whole plausible Modbus address
+# space generously past that in case of an offset.
+COARSE_MAX = 10000
+COARSE_STEP = 50
 
 inst = minimalmodbus.Instrument(PORT, STATION_NUMBER, mode=minimalmodbus.MODE_RTU)
 inst.serial.baudrate = 9600
@@ -43,61 +48,51 @@ inst.serial.parity = serial.PARITY_NONE
 inst.serial.stopbits = 1
 inst.serial.timeout = 1
 
-print(f"Scanning addresses {SCAN_ADDRESSES.start}-{SCAN_ADDRESSES.stop - 1} on station {STATION_NUMBER}...")
+
+def try_read(address: int) -> int | None:
+    try:
+        return inst.read_register(address, number_of_decimals=0, functioncode=3, signed=False)
+    except minimalmodbus.ModbusException:
+        return None
+    except (serial.SerialException, OSError) as exc:
+        print(f"  COMMUNICATION FAILED at address {address}: {exc}")
+        print("  Stopping - check wiring/PORT, and make sure SamSoar2022's Monitor is closed.")
+        raise SystemExit(1)
+
+
+print(f"Looking for D0's value ({TEST_VALUE}) somewhere in addresses 0-{COARSE_MAX}...")
+print(f"(coarse pass, step {COARSE_STEP} - this takes a few minutes)")
 print()
 
-found_fc03 = []
-found_fc04 = []
+candidates = []
+checked = 0
+for address in range(0, COARSE_MAX + 1, COARSE_STEP):
+    value = try_read(address)
+    checked += 1
+    if value is not None:
+        print(f"  address {address}: responded, value = {value}")
+        if value == TEST_VALUE:
+            candidates.append(address)
+    time.sleep(0.03)
 
-for functioncode, found_list in ((3, found_fc03), (4, found_fc04)):
-    fc_name = "03 (holding registers)" if functioncode == 3 else "04 (input registers)"
-    print(f"--- Function code {fc_name} ---")
-    for address in SCAN_ADDRESSES:
-        try:
-            value = inst.read_register(address, number_of_decimals=0, functioncode=functioncode, signed=False)
-            print(f"  address {address}: responded, value = {value}")
-            found_list.append(address)
-        except minimalmodbus.ModbusException as exc:
-            print(f"  address {address}: error - {exc}")
-        except (serial.SerialException, OSError) as exc:
-            print(f"  address {address}: COMMUNICATION FAILED - {exc}")
-            print("  (stopping this function code's scan - check wiring/PORT)")
-            break
-        time.sleep(0.05)
-    print()
+print(f"\nCoarse pass done ({checked} addresses checked).")
 
-print("=" * 60)
-if not found_fc03 and not found_fc04:
-    print("No address responded with either function code.")
-    print("Every address returned 'illegal data address' (not a timeout), which still")
-    print("means wiring/station/baud are correct - the PLC is just not exposing D0-D20")
-    print("this way. Check SamSoar2022's SDO Modbus Tables / slave mapping settings again,")
-    print("or check the PLC manual's Modbus mapping chapter for the real address scheme.")
+if not candidates:
+    print(f"\nDidn't find {TEST_VALUE} anywhere in the coarse pass.")
+    print("Either D0 wasn't actually set to this value in SamSoar2022, or the real")
+    print("address is in a gap the coarse step skipped over, or D registers use a")
+    print("completely different function code/addressing scheme than guessed here.")
     raise SystemExit(0)
 
-if found_fc03:
-    print(f"Function code 03 responded at: {found_fc03}")
-if found_fc04:
-    print(f"Function code 04 responded at: {found_fc04}")
+print(f"\nFound candidate(s) near: {candidates}")
+print("Narrowing down with a fine sweep around each candidate...")
 
-# Try writing to the first address that responded on FC03 (writes only work
-# on holding registers / FC03's address space, not FC04's read-only input
-# registers), then read it back to confirm.
-if found_fc03:
-    test_address = found_fc03[0]
-    test_value = 1234
-    print()
-    print(f"Testing write: address {test_address}, function code 06 (write single register)...")
-    try:
-        inst.write_register(test_address, test_value, number_of_decimals=0, functioncode=6, signed=False)
-        time.sleep(0.2)
-        after = inst.read_register(test_address, number_of_decimals=0, functioncode=3, signed=False)
-        if after == test_value:
-            print(f"  Success: address {test_address} now reads {after}.")
-            print(f"  Go check SamSoar2022's Monitor - whichever D register shows {test_value} now")
-            print(f"  is the one that corresponds to Modbus holding register address {test_address}.")
-        else:
-            print(f"  Wrote {test_value} but read back {after} - write may not be supported here.")
-        inst.write_register(test_address, 0, number_of_decimals=0, functioncode=6, signed=False)
-    except minimalmodbus.ModbusException as exc:
-        print(f"  Write failed: {exc}")
+for center in candidates:
+    print(f"\n--- fine sweep around {center} ---")
+    lo = max(0, center - COARSE_STEP)
+    hi = center + COARSE_STEP
+    for address in range(lo, hi + 1):
+        value = try_read(address)
+        if value == TEST_VALUE:
+            print(f"  *** address {address} == {TEST_VALUE} - this is D0! ***")
+        time.sleep(0.03)
